@@ -192,6 +192,14 @@ def build_email(data: dict, smtp_user: str, mail_to: List[str]) -> EmailMessage:
     return msg
 
 
+@app.route("/", methods=["GET"])
+def index():
+    return jsonify({
+        "ok": True,
+        "service": "email-middleware",
+        "endpoints": ["/health", "/send"]
+    })
+
 @app.route("/health", methods=["GET"])
 def health():
     return ok_response()

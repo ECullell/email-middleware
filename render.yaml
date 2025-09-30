@@ -1,0 +1,30 @@
+# render.yaml
+services:
+  - type: web
+    name: email-middleware
+    env: python
+    region: frankfurt        # pick a region close to you; e.g., "frankfurt" or "oregon"
+    plan: free               # upgrade later if you need more uptime/resources
+    autoDeploy: true
+
+    buildCommand: |
+      pip install --upgrade pip
+      pip install -r requirements.txt
+
+    startCommand: |
+      gunicorn app:app --bind 0.0.0.0:$PORT --workers 2 --threads 4 --timeout 30
+
+    healthCheckPath: /health
+
+    envVars:
+      # Set these in Render Dashboard after first deploy (they won’t be committed)
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASS
+        sync: false
+      # Optional (defaults to SMTP_USER if not set)
+      - key: MAIL_TO
+        value: ecullell@usdm.com
+      # Add your card origins (comma-separated if more)
+      - key: CORS_ORIGINS
+        value: https://enric-cullell.github.io

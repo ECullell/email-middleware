@@ -1,6 +1,7 @@
 """Minimal email relay service for business card contact forms."""
 from __future__ import annotations
 
+import json
 import logging
 import os
 import smtplib
@@ -112,6 +113,50 @@ def coerce_bool(value) -> bool:
 
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
+
+def _parse_recipient_map(raw: str | None) -> Dict[str, List[str]]:
+    """Load per-card recipient mapping from env (JSON or key=value pairs)."""
+    mapping: Dict[str, List[str]] = {}
+    if not raw:
+        return mapping
+
+    raw = raw.strip()
+    if not raw:
+        return mapping
+
+    # Prefer JSON so complex lists are easy to express.
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        data = {}
+    else:
+        if isinstance(data, dict):
+            for key, value in data.items():
+                if isinstance(value, str):
+                    recipients = [addr.strip() for addr in value.split(",") if addr.strip()]
+                elif isinstance(value, list):
+                    recipients = [str(addr).strip() for addr in value if str(addr).strip()]
+                else:
+                    continue
+                if key and recipients:
+                    mapping[key] = recipients
+        if mapping:
+            return mapping
+
+    # Fallback: cardA=a@x.com,b@y.com;cardB=c@z.com
+    for entry in raw.split(";"):
+        if not entry.strip():
+            continue
+        key, _, value = entry.partition("=")
+        recipients = [addr.strip() for addr in value.split(",") if addr.strip()]
+        if key.strip() and recipients:
+            mapping[key.strip()] = recipients
+    return mapping
+
+
+MAIL_TO_DEFAULT = os.getenv("MAIL_TO", "")
+MAIL_TO_MAP = _parse_recipient_map(os.getenv("MAIL_TO_MAP"))
+
 def clean_email(value: str) -> str:
     value = (value or "").strip()
     # prevent header injection
@@ -201,8 +246,22 @@ def send():
         logger.error("SMTP credentials not configured")
         return error_response("Mailer not configured", 500)
 
-    mail_to_raw = os.getenv("MAIL_TO", smtp_user)
-    mail_to = [addr.strip() for addr in mail_to_raw.split(",") if addr.strip()]
+    card_id_value = payload.get("cardId")
+    card_id = card_id_value.strip() if isinstance(card_id_value, str) else ""
+
+    mail_to = MAIL_TO_MAP.get(card_id)
+    if mail_to:
+        logger.info("Routing card %s to %s", card_id, ", ".join(mail_to))
+    else:
+        mail_to_raw = MAIL_TO_DEFAULT or smtp_user
+        mail_to = [addr.strip() for addr in mail_to_raw.split(",") if addr.strip()]
+        if not mail_to:
+            mail_to = [smtp_user]
+        if card_id:
+            logger.info(
+                "No dedicated recipients configured for card %s; using default", card_id
+            )
+
 
     try:
         email_message = build_email(payload, smtp_user, mail_to)
